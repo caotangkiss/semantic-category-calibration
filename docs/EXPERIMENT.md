@@ -14,17 +14,14 @@ Based on this hypothesis, I worked with Codex and Doubao on a simple experiment 
 
 ## Experimental setup
 
-Use GPT-2 Small.
-
-Run `.venv/bin/python semantic_category_calibration.py "I put ketchup on my" "I put ketchup on a"`
-
-Semantic categories and their members are explicitly configured in [selection-policy.json](../selection-policy.json), while associations between input tokens and candidates are calculated through model attribution. The food group has 12 members:
-
-`salad, burger, sandwich, fries, chips, pizza, eggs, steak, rice, soup, chicken, toast`
-
-The actual forms used are single tokens with a leading space. The "total food-group probability" refers only to the sum of the original probabilities of explicitly listed candidates that receive positive support from the current input token (for example, the food token "potato" does not enter the sum if it is not configured in the JSON file). It does not represent the complete probability of all food expressions. Duplicate tokens within a group are counted once; multi-token members are skipped.
-
-Associations such as `my → body parts` and `ketchup → food` are no longer predefined. For each input token, replace its input vector in turn and measure the change in each candidate's probability; semantic categories are still configured by the user.
+- Use GPT-2 Small.
+- Run `.venv/bin/python semantic_category_calibration.py "I put ketchup on my"`
+- Semantic categories and their members are explicitly configured in [selection-policy.json](../selection-policy.json), while associations between input tokens and candidates are calculated through model attribution. The food group has 12 members:
+  `salad, burger, sandwich, fries, chips, pizza, eggs, steak, rice, soup, chicken, toast`
+- The actual forms used are single tokens with a leading space.
+- The "total food-group probability" refers only to the sum of the original probabilities of explicitly listed candidates that receive positive support from the current input token (for example, the food token "potato" does not enter the sum if it is not configured in the JSON file). It does not represent the complete probability of all food expressions.
+- Duplicate tokens within a group are counted once.
+- Only candidate words represented by a single token are included; words split into multiple tokens by the tokenizer are currently excluded from the calculation.
 
 ## Complete procedure
 
@@ -208,7 +205,11 @@ The original candidates include `piece` **2.870024%**, `hot` **2.382185%**, `san
 
 For the original winner `piece`, the zero-vector baseline selects `on` as its source, while the mean-embedding and space-embedding baselines select `a`. Since the source estimates disagree, **piece** is retained directly, without traversing attention rankings or comparing category gates.
 
-After running the command above, the complete JSON result is at `outputs/prompt-2.json`.
+Run the following command. The complete JSON result is saved to `outputs/prompt-1.json` by default:
+
+```bash
+.venv/bin/python semantic_category_calibration.py "I put ketchup on a"
+```
 
 ## Replace ketchup with cream: "I put cream on my" — result: face is not replaced
 [Test results]
@@ -231,7 +232,7 @@ Selected: " face" 8.639087%
 
 ## Analysis
 
-The tests above are consistent with mathematical expectations.
+The test results above are consistent with the expected behavior under the specified rules.
 
 ## Conclusion
 
