@@ -21,5 +21,4 @@ tmp/
 
 # Local editor settings and Chinese experiment transcripts.
 .idea/
-/docs/I_put_ketchup_on_my.md
-/docs/I_put_mustard_on_my.md
+/docs/*_zh.md

@@ -1,52 +1,73 @@
 # Semantic Category Calibration: can category probabilities improve next-token selection?
 
-This article explores **Semantic Category Calibration**, an inference-time decoding postprocessing method. It combines semantic categories, input-token attention, and candidate probabilities to adjust next-token selection while preserving model weights and the original predicted probabilities.
+This article explores **Semantic Category Calibration**, an inference-time decoding postprocessing method. It combines semantic categories, input attention, and candidate probabilities to adjust next-token selection while preserving model weights and the original predicted probabilities.
 
-## Motivation and hypothesis
+## Hypothesis
 
-For the prefix `I put ketchup on my`, my local GPT-2 model selects ` face` under greedy decoding. In an ordinary eating context, I would prefer a food-related continuation such as ` burger` or ` salad`.
+When GPT-2 uses greedy decoding for `I put ketchup on my`, it selects `face`. In an ordinary eating context, however, we would expect a food-related continuation such as `burger` or `salad`.
 
-The distribution suggests a possible opportunity: `face` has the highest individual probability, but several food candidates collectively have greater probability mass, and the strongest food candidate is only slightly behind `face`. The hypothesis is that support associated with a higher-attention input may be spread across many related candidates, allowing a more concentrated individual candidate to win. Could a postprocessor combine attention ordering, semantic-group probabilities, and the best candidate's probability gap to make a more appropriate choice?
+Looking at the original distribution, `face` has the highest individual probability, but its lead is small; several food candidates have a relatively high combined probability, and the best of them is very close to `face`.
 
-Based on this hypothesis, I collaborated with Codex and Doubao on a small experiment to preliminarily test the idea. The procedure and observations follow.
+The guess is that `ketchup` receives the most attention, or at least more than `my`, and that ketchup is associated with food while my is associated with body parts. Could we therefore combine input-word attention rankings, total category probabilities, and probability gaps to select a candidate closer to our expectations during postprocessing?
 
-My initial guess was that `ketchup` would receive the most attention, or at least more than `my`. The experiment corrected the first part of that guess. The implementation now estimates input-to-candidate support by embedding ablation instead of configuring associations such as `ketchup → food` or `my → body parts`. This estimates influence under specified interventions, not a unique causal origin. Also, `face` is an output candidate, not an input token with a directly comparable attention score.
+Based on this hypothesis, I worked with Codex and Doubao on a simple experiment that roughly verified the idea. The procedure follows:
 
 ## Experimental setup
 
-GPT-2 Small has 12 layers, 12 heads per layer, a hidden size of 768, and a vocabulary of 50,257 tokens. The reference environment used Python 3.9, PyTorch 2.2.2, and Transformers 4.46.3. Inference ran on CPU, in evaluation mode, with eager attention and no sampling or temperature adjustment.
+Use GPT-2 Small.
 
-See [README.md's Quick start](../README.md#quick-start) for the reference checkpoint revision and installation commands, then run `.venv/bin/python semantic_category_calibration.py "I put ketchup on my" "I put ketchup on a" --output-dir outputs`. Prompts must be supplied explicitly and can be replaced with your own text; the script has no default examples or expected answers.
+Run `.venv/bin/python semantic_category_calibration.py "I put ketchup on my" "I put ketchup on a"`
 
-If GPT-2 Small is already downloaded, install the dependencies, skip the model download, and run `.venv/bin/python semantic_category_calibration.py "your prompt" --model-dir /path/to/gpt2` with a directory containing compatible configuration, tokenizer files, and safetensors weights. The project can also run on a remote machine. A remote HTTP API adapter is not yet implemented and would require full vocabulary probabilities, attention, and repeated inference with controlled input embeddings; see [README.md's model setup instructions](../README.md#existing-models-and-remote-execution).
-
-Semantic categories and candidate members are manually defined in [selection-policy.json](../selection-policy.json). The food group contains 12 candidates:
+Semantic categories and their members are explicitly configured in [selection-policy.json](../selection-policy.json), while associations between input tokens and candidates are calculated through model attribution. The food group has 12 members:
 
 `salad, burger, sandwich, fries, chips, pizza, eggs, steak, rice, soup, chicken, toast`
 
-Calculations use their single-token forms with a leading space. At each examined input, sum only the configured members with consistent positive attribution to that input. For example, `potato` contributes nothing unless it is listed in the policy. This is a finite candidate list, not the complete probability of all possible food expressions. Duplicate token IDs are counted once per group; multi-token members are skipped and recorded explicitly.
+The actual forms used are single tokens with a leading space. The "total food-group probability" refers only to the sum of the original probabilities of explicitly listed candidates that receive positive support from the current input token (for example, the food token "potato" does not enter the sum if it is not configured in the JSON file). It does not represent the complete probability of all food expressions. Duplicate tokens within a group are counted once; multi-token members are skipped.
 
-Version 3 removes input anchors and context-pattern rules. Associations are computed from model interventions; the semantic labels and membership lists remain user supplied.
+Associations such as `my → body parts` and `ketchup → food` are no longer predefined. For each input token, replace its input vector in turn and measure the change in each candidate's probability; semantic categories are still configured by the user.
 
-## Complete selection procedure
+## Complete procedure
 
-1. **Process the full prompt.** Pass the context, style requirements, and unfinished text together to GPT-2 to obtain attention and next-token probabilities for that complete input.
-2. **Preserve original probabilities.** Let `t` denote any next-token candidate and `p(t)` its original model probability. `t*` is the candidate with the highest probability over the complete vocabulary (the original winner); the star `*` marks this winner, and `p* = p(t*)` is its probability. Neither weights nor probabilities change.
-3. **Estimate the original winner's source.** Replace one input token embedding at a time using zero, the mean vocabulary embedding, and the space-token embedding. Keep sequence length, positions, other embeddings, and output position unchanged. For each baseline, calculate `log(original probability) - log(perturbed probability)`. A positive drop indicates support relative to that replacement. Accept a stopping source only when all three baselines identify the same unique input with the greatest positive drop for `t*`; otherwise retain `t*`. A `1e-6` tolerance handles near-zero values and source ties; it is not a confidence threshold. If the sources disagree, this version does not handle multiple possible stopping points and returns before category evaluation. This conservative fallback can miss a useful replacement; it does not establish that the original winner is preferable or that alternatives failed the probability gates.
-4. **Inspect only higher-attention inputs.** Use the last input position as query, average equally across all 12 layers and 144 heads, and inspect inputs in descending attention strictly above the stopping source. Never evaluate categories or gates at that source or at attention ties or lower-attention inputs.
-5. **Choose a primary category.** Reuse the ablation measurements for every configured member. At each input, retain only members with positive drops under all three baselines, then choose the category with the greatest summed original probability. The current input need not be a member's strongest source: weak positive support above the numerical tolerance also qualifies, and other inputs may support the same candidate. Break mass ties by the best member probability, then random choice if still tied. Skip inputs with no consistently supported members. Positive support measures an effect on probability; it does not imply shared semantic meaning.
-6. **Check replacement gates.** For group `G`, let `S_G = sum(p(t) for t in G)` over its supported members and let `c_G` be its highest-probability candidate. If `c_G` is already `t*`, continue to the next eligible input without creating an earlier stopping point. For alternative candidates, both conditions must hold:
+Notation:
+- `t` represents any next-token candidate.
+- `p(t)` represents the original probability predicted by the model for that candidate.
+- `t`* specifically denotes the candidate with the highest probability across the entire vocabulary (the original winner). The star `*` marks the winner; `p* = p(t*)` is its probability. Original probabilities are used throughout the subsequent steps.
 
-   - **`R`: the minimum category-mass ratio.** Require `S_G / p* >= R`: the category's total probability must be at least `R` times the original winner's probability. With `R = 2` and `p* = 4%`, the category must have `S_G >= 8%`.
-   - **`delta`: the maximum relative probability deficit of the group's best candidate.** Require `(p* - p(c_G)) / p* <= delta`. A value of `delta = 0.10` allows the candidate to be at most 10% below the original winner, relative to that winner's probability. With `p* = 4%`, this requires `p(c_G) >= 3.6%`.
+1. **Estimate the original winner's main source as the stopping point.**
+Perform attribution experiments:
+- Replace only one input token's embedding at a time, using a zero vector, the mean embedding of the entire vocabulary, and the space-token embedding as separate baselines.
+- Keep the input length, positions, other tokens, and output position unchanged.
+- The attribution score is `log(original probability) - log(probability after replacement)`. A positive value means that this input supports the candidate relative to that baseline.
+- Use an input token as the stopping point only when all three baselines identify it as the unique source with the strongest positive support for `t*`; otherwise, retain the original winner. A `1e-6` tolerance handles values close to zero or ties; it is not a confidence threshold.
+- If the sources selected by the three baselines disagree (for example, they point to `on` and `a`), the current version does not handle multiple possible stopping points, so it directly retains the original winner without proceeding to category selection. This is a conservative choice: it does not mean that the original candidate is necessarily more appropriate, nor that other categories failed the probability gates; it may miss a possible replacement.
 
-7. **Replace or stop.** Select the first passing alternative and stop. On failure, move to the next higher-attention input, not a secondary category of the same input. If none passes before the stopping source, keep `t*`.
+2. **Inspect inputs with higher attention than the stopping point and identify the category members they support.**
+- Use the last input position as the query, average equally over 12 layers and 144 heads, and inspect inputs in descending attention order.
+- The stopping point itself does not participate in category selection or gate comparisons; inputs with equal or lower attention are also excluded. For example, if the estimated source of `face` is `my`, consider only inputs with higher attention than `my`.
 
-All examples use `R = 2` and `delta = 0.10`. They are experimental defaults, not independently calibrated settings. The interventions follow the [feature ablation approach](https://captum.ai/docs/attribution_algorithms); attribution depends on the replacement baseline.
+3. **Sum the original probabilities of these members.**
+- Reuse the attribution experiments to check whether members of each **manually configured** category receive positive support from the current input token under all three baselines.
+- For each group, sum only the original probabilities of these supported members to obtain the group probability.
 
-## Test 1: `I put ketchup on my`
+4. **Check the replacement gates. (Select the group's best candidate when the total category probability is high enough and that candidate is not far behind.)**
+- Select the category with the highest group probability.
+- The group probability is `S = sum(p(t))`; its highest-probability candidate is `c`, whose probability is `p(c)`.
+- If `c` is `t*`, make no replacement and continue to the next input with higher attention than the stopping point.
+- When total probabilities are tied, compare each group's highest candidate probability and select the group closer to the original winner. Choose randomly only when both measures are tied.
+- Both of the following conditions must hold to replace the original next token:
+   - **`R`: the minimum multiple for total category probability.** Require `S / p* >= R`, meaning that the total category probability must be at least `R` times the original winner's probability. `R=2` means at least 2 times; for example, when `p*=4%`, require `S>=8%`.
+   - **`delta`: the maximum allowed gap between the group's best candidate and the original winner, relative to the original winner.** Require `(p* - p(c)) / p* <= delta`. `delta=0.10` means a relative deficit of at most 10%; for example, when `p*=4%`, require `p(c)>=3.6%`.
 
-The original top eight probabilities (leading spaces omitted in these labels) are:
+5. **Replace or stop.**
+- Select the best candidate from the first category that passes the gates, then stop.
+- If the gates fail, inspect the next input with higher attention than the stopping point.
+- If no replacement candidate has been found by the stopping point, retain the original winner.
+
+The tests all use **R=2, delta=0.10**, merely an uncalibrated starting point for the experiment. Attribution follows the idea of [feature ablation](https://captum.ai/docs/attribution_algorithms); it estimates contribution relative to a baseline, rather than proving a unique causal source.
+
+## Expected replacement of the original next token: I put ketchup on my — result: face replaced with salad
+
+The top eight original probabilities (leading spaces omitted in the display):
 
 - `face`: 4.045409%
 - `salad`: 3.703902%
@@ -57,29 +78,22 @@ The original top eight probabilities (leading spaces omitted in these labels) ar
 - `fries`: 1.071093%
 - `car`: 0.989428%
 
-Using the last `my` position as the query, the aggregated input-token ranking is:
+Attention from the final `my` to each input token, averaged over all layers and heads:
 
 `I` 60.28% → `on` 12.31% → `etchup` 10.01% → `my` 8.07% → `put` 5.69% → `k` 3.66%.
 
-`I` has the highest attention. This is an attention summary, not a causal contribution ranking for the output `face`.
+`I` has the highest attention.
 
-The actual decision trace is:
+The actual procedure:
+- All three attribution baselines identify `my` as the input with the strongest support for `face`, so `my` becomes the stopping point.
+- The inputs with higher attention than `my` are `I`, `on`, and `etchup`, in that order; `my` itself is not inspected.
+- When inspecting `I`, the food-group members with consistent positive support are `salad, fries, steak, pizza, chicken, soup, rice, eggs, chips`. Their total original probability is **8.2084%**, or **2.029 times** that of `face`. (It is `I`, rather than `etchup`, which went beyond my initial expectation that replacement would be triggered while inspecting etchup. My hypothesis is that the candidates supported by `I` and etchup overlap, including food candidates; the full context may give these food candidates a relatively high combined probability, leading to the selection of the food group while inspecting I.)
+- The group's best candidate, `salad`, trails by **8.442%** in relative terms. Both conditions pass, so **salad** is selected, and `on` and `etchup` are not inspected further.
 
-1. All three ablation baselines identify `my` as the strongest positive source for `face`.
-2. Eligible inputs are `I`, `on`, and `etchup`, in that order. `my` itself is excluded.
-3. At `I`, the supported food members are `salad, fries, steak, pizza, chicken, soup, rice, eggs, chips`, with original mass **8.2084%**, or **2.029×** the probability of `face`.
-4. `salad` has a relative deficit of **8.442%**, so both gates pass at `I`. The procedure does not visit `on` or `etchup`.
+After running the command above, the complete JSON result is at `outputs/prompt-1.json`.
 
-Selection happens at `I`, rather than at `etchup` as I initially expected. My interpretation is that the full context, including ketchup, constrains the likely continuations; summing related candidates exposes support spread across them even while inspecting `I`. This is an interpretation of the complete-context result, not a measured conditional probability of `etchup` given `I`, nor evidence that `I` itself has food semantics. The sum is the original probability of the supported candidate set, not probability contributed exclusively by `I`.
-
-The postprocessor selects **`salad`**. Its model probability remains **3.703902%**. It does not inherit the group's probability mass. The absolute gap from `face` is **0.341507 percentage points**, while the relative gap is **8.442%**.
-
-The command above writes the complete report to `outputs/prompt-1.json`.
-
-English output for the replacement example:
-
-```text
-
+Test output:
+```shell
 Prompt: "I put ketchup on my"
   Original: " face" 4.045409%
   Selected: " salad" 3.703902%
@@ -140,27 +154,15 @@ Semantic groups:
     Best candidate: " car" 0.989428%
 ```
 
-## Test 2: replace ketchup with mustard — `I put mustard on my`
+## Replace ketchup with mustard: I put mustard on my — result: face is not replaced
+Test results:
+Original: " face" 4.597261%
+Selected: " face" 4.597261%
 
-Run `.venv/bin/python semantic_category_calibration.py "I put mustard on my"`.
+Analysis: This is somewhat counterintuitive; I think it is an issue with the training data. The primary category for `mustard` is body_parts—what on earth was this model fed, haha?
 
-Both the original and selected token are **`face`**, with probability **4.597261%**. All three baselines identify `my` as its source, so this example reaches category evaluation and the probability gates.
-
-1. At `I`, the primary category is `personal_objects`. Its mass is only **0.820×** the probability of `face`, and its best candidate trails by **84.669%**. Both gates fail.
-2. At `on` and then `mustard`, the primary category is `body_parts`, whose best candidate is already `face`. Neither proposes a replacement.
-3. The procedure reaches the stopping point `my` and retains `face` without evaluating that input.
-
-I found the `body_parts` result at `mustard` surprising and suspect that the training data may play a role. This experiment does not identify the training examples responsible. Unlike the source-disagreement example below, this case exercises retention after the actual category checks.
-
-English output through the selection trace:
-
-```text
-
-Prompt: "I put mustard on my"
-  Original: " face" 4.597261%
-  Selected: " face" 4.597261%
-  Decision: Reached the original winner's attributed source; keeping the original choice without evaluating that source or lower-attention tokens.
-
+Test output:
+```shell
 Top 8 next-token candidates (original probabilities):
 Rank  Token ID    Probability  Token
    1      1986      4.597261%  " face"
@@ -200,75 +202,61 @@ Selection trace:
      This category's best candidate is the original winner; continue to the next higher-attention input token.
 ```
 
-## Test 3: replace my with a — `I put ketchup on a`
+## Replace my with a: I put ketchup on a — result: piece is not replaced
 
-Selected original probabilities:
+The original candidates include `piece` **2.870024%**, `hot` **2.382185%**, `sandwich` **2.357416%**, `plate` **2.125851%**, `burger` **1.917004%**, and `salad` **1.840515%**.
 
-- `piece`: 2.870024%
-- `hot`: 2.382185%
-- `sandwich`: 2.357416%
-- `plate`: 2.125851%
-- `burger`: 1.917004%
-- `salad`: 1.840515%
+For the original winner `piece`, the zero-vector baseline selects `on` as its source, while the mean-embedding and space-embedding baselines select `a`. Since the source estimates disagree, **piece** is retained directly, without traversing attention rankings or comparing category gates.
 
-The zero-embedding baseline identifies `on` as the strongest source for `piece`; the mean and space baselines identify `a`. Because the sources disagree, the procedure retains **`piece`** without evaluating categories or probability gates.
+After running the command above, the complete JSON result is at `outputs/prompt-2.json`.
 
-The command above writes the complete report to `outputs/prompt-2.json`.
+## Replace ketchup with cream: "I put cream on my" — result: face is not replaced
+[Test results]
+  Original: " face" 19.713334%
+  Selected: " face" 19.713334%
 
-## Test 4: replace ketchup with cream — `I put cream on my`
+[Analysis] Consistent with mathematical expectations and common sense.
 
-Run `.venv/bin/python semantic_category_calibration.py "I put cream on my"`.
+## Replace my with her, which is uncommon here: "I put ketchup on her" — result: face is not replaced
+[Test results]
+Original: " face" 8.639087%
+Selected: " face" 8.639087%
 
-- Original: **`face`**, **19.713334%**.
-- Selected: **`face`**, **19.713334%**.
+[Analysis] Consistent with mathematical expectations.
 
-The estimated stopping source is `my`. The alternative at `I` fails both gates; at `on` and `cream`, the primary category already favors `face`. Retention agrees with the selection rule and the ordinary interpretation of putting cream on one's face.
+## Full test output examples
 
-## Test 5: replace my with her — `I put ketchup on her`
-
-Run `.venv/bin/python semantic_category_calibration.py "I put ketchup on her"`.
-
-- Original: **`face`**, **8.639087%**.
-- Selected: **`face`**, **8.639087%**.
-
-The estimated stopping source is `her`. The alternative at `I` fails both gates; at `on`, the primary category already favors `face`. The result is consistent with the rule without establishing that it is the best continuation.
-
-The single-prompt commands reuse `outputs/prompt-1.json`; use different `--output-dir` values to preserve each run.
+- [Replacement: I put ketchup on my (face → salad)](I_put_ketchup_on_my.md)
+- [Original retained: I put mustard on my (face unchanged)](I_put_mustard_on_my.md)
 
 ## Analysis
 
-The five examples show three distinct paths: replacement when both probability gates pass, retention after category checks find no eligible replacement, and early retention when source estimates disagree. Only the first two paths exercise the replacement checks. The outcomes are consistent with the implemented rule, but they do not establish better general accuracy.
+The tests above are consistent with mathematical expectations.
 
-Category mass now depends on the examined input's supported members. At `I` in Test 1, the food mass is **8.2084%**; using the full configured food-list mass for every input would bypass attribution.
-Other limitations:
+## Conclusion
 
-- Larger or broader groups can accumulate more probability. Group coverage, overlap, and membership affect the result.
-- Zero and mean embeddings can be outside ordinary language inputs; space replacement also changes grammar. Baseline agreement does not prove a unique causal source. Effects on log probabilities can reflect competition among candidates and input interactions.
-- Configured categories do not cover every vocabulary token; automatically estimating support does not automatically discover semantic classes.
-- The examples informed the design and are not independent generalization tests.
-- `face` is not universally incorrect; it could fit a prank or makeup context. The target is a conventional-context preference.
-- Category aggregation covers only one possible source of undesirable continuation. It does not solve general reasoning or factual accuracy.
+The experiment provides preliminary verification of the feasibility of this selection approach: while preserving the model's original probabilities, combining model attribution, semantic grouping, attention traversal order, and candidate-gap gates can produce an interpretable and adjustable rule for next-token selection.
+However, there are too few test cases to establish an overall quality improvement or applicability to larger models.
 
-A next evaluation should compare raw greedy decoding, grouping with probability gates but without attention, and the same method with attention ordering. Tune thresholds separately from evaluation data. Measure desired corrections, unwanted replacements, and computational overhead across diverse contexts, including explicit unconventional requests. Explore combining Semantic Category Calibration with Supervised Fine-Tuning and Preference Learning, with Semantic Category Calibration taking lower priority than both.
+## Reflections
 
-## Preliminary conclusion
+Limitations:
+- Manually configured categories do not cover the entire vocabulary.
+- Attribution is also only an estimate of the effect on probability;
+- Categories are just one angle on outputs that do not meet expectations; they do not solve all common-sense, factual, and reasoning problems.
 
-The prototype demonstrates that an unchanged model probability distribution can support an explicit alternative decision policy based on input attribution, semantic groups, attention ordering, and candidate-level margins. The five examples demonstrate both replacement and retention, including retention after the category and probability checks. It has not established general improvement or applicability to larger models.
+Further verification and exploration:
 
-This is an inference-time decision-rule hypothesis, not a change to learned model parameters. It introduces an additional preference for contextually appropriate categories.
+- More tests: to verify the hypothesis and adjust the thresholds.
+- Distinguish the dataset from the test set.
+- Introduce other optimization mechanisms to work together, such as Supervised Fine-Tuning and Preference Learning; I believe Semantic Category Calibration should take lower priority than both.
 
-## Potential benefit and cost
+## Benefits and costs
 
-Related candidates can contribute collectively to a decision even when none individually wins. The margin gate limits how far the replacement can depart from the original winner.
+- The potential benefit is to let information whose probability is spread across several related candidates contribute jointly to the decision, while using the candidate gap to limit replacements. Costs include obtaining attention, establishing associations, and category calculations;
+- An automated version may also need an additional classifier. Latency, memory use, and the overall cost–benefit have not been measured in this experiment.
+- For a prompt containing `n` input tokens, attribution adds `3n` complete forward passes, and the cost of each inference pass also grows with input length.
 
-Costs include obtaining attention, estimating support, and evaluating groups. For `n` input tokens, attribution adds `3n` complete forward passes, and the cost of each pass also grows with sequence length; total cost is not simply linear. Raw mode skips attribution. A general version might require an additional classifier or semantic model. Latency, memory use, and overall cost–benefit have not been measured.
+# Discussion welcome
 
-## Open questions
-
-1. How robust are ablation-based associations across replacement baselines and prompts, and how should semantic categories and members be discovered automatically? Polysemy, subwords, and multi-token expressions remain open issues.
-2. How should unequal category sizes, incomplete coverage, overlap, and nearly tied competing categories be handled?
-3. Does attention provide value beyond semantic grouping? Is averaging all layers/heads appropriate, especially when words such as `I` or `on` rank highly?
-4. How should thresholds be calibrated? Token-probability standard deviations describe dispersion, not prediction error, confidence intervals, or statistical significance. In this implementation, standard deviations are diagnostic only.
-5. What decision objective should replace single-token probability maximization? How should conventionality, user intent, useful corrections, and unwanted overrides be evaluated?
-
-Feedback on the probabilistic interpretation, decision rule, and experimental design is welcome.
+Feedback on the interpretation of probabilities, the rules, and the experimental design is welcome, as are recommendations of related research.
