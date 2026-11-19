@@ -1,0 +1,5 @@
+{
+  "top_k": 8,
+  "output_dir": "outputs",
+  "model_dir": "models/gpt2"
+}

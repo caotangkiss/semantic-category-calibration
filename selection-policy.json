@@ -1,0 +1,95 @@
+{
+  "version": 3,
+  "description": "Semantic categories and candidate members. Estimate input-to-candidate support by embedding ablation; inspect only input tokens with attention strictly above the attributed source of the original winner.",
+  "thresholds": {
+    "max_relative_gap": 0.1,
+    "min_group_mass_ratio": 2.0
+  },
+  "diagnostics": {
+    "std_top_k": 20
+  },
+  "groups": [
+    {
+      "id": "personal_pronouns",
+      "label": "Personal pronouns",
+      "members": [
+        "I",
+        "you",
+        "he",
+        "she",
+        "we",
+        "they",
+        "me",
+        "him",
+        "her",
+        "us",
+        "them"
+      ]
+    },
+    {
+      "id": "food",
+      "label": "Food",
+      "members": [
+        "salad",
+        "burger",
+        "sandwich",
+        "fries",
+        "chips",
+        "pizza",
+        "eggs",
+        "steak",
+        "rice",
+        "soup",
+        "chicken",
+        "toast"
+      ]
+    },
+    {
+      "id": "body_parts",
+      "label": "Body parts",
+      "members": [
+        "face",
+        "head",
+        "hand",
+        "hands",
+        "lips",
+        "fingers",
+        "finger",
+        "arm",
+        "arms",
+        "leg",
+        "legs",
+        "foot",
+        "feet",
+        "mouth",
+        "nose",
+        "hair",
+        "skin",
+        "chest",
+        "neck",
+        "back"
+      ]
+    },
+    {
+      "id": "personal_objects",
+      "label": "Personal objects",
+      "members": [
+        "shirt",
+        "pants",
+        "shoes",
+        "hat",
+        "coat",
+        "jacket",
+        "dress",
+        "car",
+        "phone",
+        "desk",
+        "bag",
+        "bed",
+        "plate",
+        "table",
+        "clothes"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+# Pinned for Intel macOS and Python 3.9. Use safetensors weights.
+torch==2.2.2
+transformers==4.46.3
+numpy==1.26.4
+safetensors==0.4.5
+huggingface-hub==0.36.2
+tokenizers==0.20.3
+# System Python 3.9 uses LibreSSL, which urllib3 2.x does not support.
+urllib3==1.26.20
