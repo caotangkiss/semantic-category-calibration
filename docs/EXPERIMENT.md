@@ -1,6 +1,6 @@
 # Semantic Category Calibration: can category probabilities improve next-token selection?
 
-We propose **Semantic Category Calibration** as an independent method for improving model output, discussed alongside Supervised Fine-Tuning (SFT) and Preference Learning. The current implementation uses semantic-category information to adjust next-token selection at inference time.
+This article explores **Semantic Category Calibration**, an inference-time decoding postprocessing method. It combines semantic categories, input-token attention, and candidate probabilities to adjust next-token selection while preserving model weights and the original predicted probabilities.
 
 ## Motivation and hypothesis
 

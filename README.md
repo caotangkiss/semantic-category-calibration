@@ -2,7 +2,7 @@
 
 [Experiment](docs/EXPERIMENT.md)
 
-Semantic Category Calibration is a proposed method for improving model output, discussed alongside Supervised Fine-Tuning and Preference Learning. When combined, it takes lower priority than both. This implementation uses semantic categories, input-token attention, and probability thresholds to select the next token without updating GPT-2 weights or changing its probabilities.
+Semantic Category Calibration is an inference-time decoding postprocessing method. It combines semantic categories, input-token attention, and candidate probabilities to adjust next-token selection while preserving model weights and the original predicted probabilities. It can complement Supervised Fine-Tuning (SFT) and Preference Learning; in this proposal, it is intended to take lower priority than both when used together.
 
 ## Files
 
