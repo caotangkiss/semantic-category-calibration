@@ -25,13 +25,37 @@ Based on this hypothesis, I worked with Codex and Doubao on a simple experiment 
 
 ## Complete procedure
 
+```mermaid
+flowchart TD
+    A["Input prompt"] --> B["GPT-2 prediction<br/>Obtain candidate probabilities and input attention"]
+    B --> C{"Can attribution consistently identify<br/>the original winner's main source?"}
+
+    C -- No --> K["Keep the original winner"]
+    C -- "Yes: use this source as the stopping point" --> D{"In descending attention order,<br/>are there more inputs above the stopping point?"}
+
+    D -- No --> K
+    D -- Yes --> E["Take the next input<br/>Filter candidates it consistently supports positively"]
+    E -- No available candidates --> D
+    E -- Candidates available --> F["Sum original probabilities by configured semantic category<br/>Select the largest group and its best candidate"]
+
+    F --> G{"Is the best candidate different from the original winner,<br/>with group probability at least 2 times the winner's<br/>and a relative candidate deficit of at most 10%?"}
+
+    G -- No --> D
+    G -- Yes --> H["Select this candidate and stop"]
+```
+
+*"Consistent positive support" means that all three attribution baselines indicate that this input supports the candidate. The **2-times and 10%** thresholds in the diagram are the current experimental settings and can be adjusted; model weights and original probabilities remain unchanged throughout.*
+
 Notation:
+
 - `t` represents any next-token candidate.
 - `p(t)` represents the original probability predicted by the model for that candidate.
 - `t`* specifically denotes the candidate with the highest probability across the entire vocabulary (the original winner). The star `*` marks the winner; `p* = p(t*)` is its probability. Original probabilities are used throughout the subsequent steps.
 
 1. **Estimate the original winner's main source as the stopping point.**
+
 Perform attribution experiments:
+
 - Replace only one input token's embedding at a time, using a zero vector, the mean embedding of the entire vocabulary, and the space-token embedding as separate baselines.
 - Keep the input length, positions, other tokens, and output position unchanged.
 - The attribution score is `log(original probability) - log(probability after replacement)`. A positive value means that this input supports the candidate relative to that baseline.
@@ -39,14 +63,17 @@ Perform attribution experiments:
 - If the sources selected by the three baselines disagree (for example, they point to `on` and `a`), the current version does not handle multiple possible stopping points, so it directly retains the original winner without proceeding to category selection. This is a conservative choice: it does not mean that the original candidate is necessarily more appropriate, nor that other categories failed the probability gates; it may miss a possible replacement.
 
 2. **Inspect inputs with higher attention than the stopping point and identify the category members they support.**
+
 - Use the last input position as the query, average equally over 12 layers and 144 heads, and inspect inputs in descending attention order.
 - The stopping point itself does not participate in category selection or gate comparisons; inputs with equal or lower attention are also excluded. For example, if the estimated source of `face` is `my`, consider only inputs with higher attention than `my`.
 
 3. **Sum the original probabilities of these members.**
+
 - Reuse the attribution experiments to check whether members of each **manually configured** category receive positive support from the current input token under all three baselines.
 - For each group, sum only the original probabilities of these supported members to obtain the group probability.
 
 4. **Check the replacement gates. (Select the group's best candidate when the total category probability is high enough and that candidate is not far behind.)**
+
 - Select the category with the highest group probability.
 - The group probability is `S = sum(p(t))`; its highest-probability candidate is `c`, whose probability is `p(c)`.
 - If `c` is `t*`, make no replacement and continue to the next input with higher attention than the stopping point.
@@ -56,11 +83,12 @@ Perform attribution experiments:
    - **`delta`: the maximum allowed gap between the group's best candidate and the original winner, relative to the original winner.** Require `(p* - p(c)) / p* <= delta`. `delta=0.10` means a relative deficit of at most 10%; for example, when `p*=4%`, require `p(c)>=3.6%`.
 
 5. **Replace or stop.**
+
 - Select the best candidate from the first category that passes the gates, then stop.
 - If the gates fail, inspect the next input with higher attention than the stopping point.
 - If no replacement candidate has been found by the stopping point, retain the original winner.
 
-The tests all use **R=2, delta=0.10**, merely an uncalibrated starting point for the experiment. Attribution follows the idea of [feature ablation](https://captum.ai/docs/attribution_algorithms); it estimates contribution relative to a baseline, rather than proving a unique causal source.
+Note: The tests all use **R=2, delta=0.10**, merely an uncalibrated starting point for the experiment. Attribution follows the idea of [feature ablation](https://captum.ai/docs/attribution_algorithms); it estimates contribution relative to a baseline, rather than proving a unique causal source.
 
 ## Expected replacement of the original next token: I put ketchup on my — result: face replaced with salad
 
@@ -82,6 +110,7 @@ Attention from the final `my` to each input token, averaged over all layers and 
 `I` has the highest attention.
 
 The actual procedure:
+
 - All three attribution baselines identify `my` as the input with the strongest support for `face`, so `my` becomes the stopping point.
 - The inputs with higher attention than `my` are `I`, `on`, and `etchup`, in that order; `my` itself is not inspected.
 - When inspecting `I`, the food-group members with consistent positive support are `salad, fries, steak, pizza, chicken, soup, rice, eggs, chips`. Their total original probability is **8.2084%**, or **2.029 times** that of `face`. (It is `I`, rather than `etchup`, which went beyond my initial expectation that replacement would be triggered while inspecting etchup. My hypothesis is that the candidates supported by `I` and etchup overlap, including food candidates; the full context may give these food candidates a relatively high combined probability, leading to the selection of the food group while inspecting I.)
@@ -90,6 +119,7 @@ The actual procedure:
 After running the command above, the complete JSON result is at `outputs/prompt-1.json`.
 
 Test output:
+
 ```shell
 Prompt: "I put ketchup on my"
   Original: " face" 4.045409%
@@ -152,6 +182,7 @@ Semantic groups:
 ```
 
 ## Replace ketchup with mustard: I put mustard on my — result: face is not replaced
+
 Test results:
 Original: " face" 4.597261%
 Selected: " face" 4.597261%
@@ -159,6 +190,7 @@ Selected: " face" 4.597261%
 Analysis: This is somewhat counterintuitive; I think it is an issue with the training data. The primary category for `mustard` is body_parts—what on earth was this model fed, haha?
 
 Test output:
+
 ```shell
 Top 8 next-token candidates (original probabilities):
 Rank  Token ID    Probability  Token
@@ -212,6 +244,7 @@ Run the following command. The complete JSON result is saved to `outputs/prompt-
 ```
 
 ## Replace ketchup with cream: "I put cream on my" — result: face is not replaced
+
 [Test results]
   Original: " face" 19.713334%
   Selected: " face" 19.713334%
@@ -219,6 +252,7 @@ Run the following command. The complete JSON result is saved to `outputs/prompt-
 [Analysis] Consistent with mathematical expectations and common sense.
 
 ## Replace my with her, which is uncommon here: "I put ketchup on her" — result: face is not replaced
+
 [Test results]
 Original: " face" 8.639087%
 Selected: " face" 8.639087%
@@ -242,6 +276,7 @@ However, there are too few test cases to establish an overall quality improvemen
 ## Reflections
 
 Limitations:
+
 - Manually configured categories do not cover the entire vocabulary.
 - Attribution is also only an estimate of the effect on probability;
 - Categories are just one angle on outputs that do not meet expectations; they do not solve all common-sense, factual, and reasoning problems.
@@ -255,7 +290,8 @@ Further verification and exploration:
 ## Benefits and costs
 
 - The potential benefit is to let information whose probability is spread across several related candidates contribute jointly to the decision, while using the candidate gap to limit replacements. Costs include obtaining attention, establishing associations, and category calculations;
-- An automated version may also need an additional classifier. Latency, memory use, and the overall cost–benefit have not been measured in this experiment.
+- An automated version may also need an additional classifier.
+- Latency, memory use, and the overall cost–benefit have not been measured in this experiment.
 - For a prompt containing `n` input tokens, attribution adds `3n` complete forward passes, and the cost of each inference pass also grows with input length.
 
 # Discussion welcome
