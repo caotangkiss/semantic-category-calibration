@@ -1,6 +1,6 @@
-# Semantic Category Calibration: can category probabilities improve next-token selection?
+# Semantic Category-Guided Next-Token Selection: can category probabilities improve next-token selection?
 
-This article explores **Semantic Category Calibration**, an inference-time decoding postprocessing method. It combines semantic categories, input attention, and candidate probabilities to adjust next-token selection while preserving model weights and the original predicted probabilities.
+This article explores **Semantic Category-Guided Next-Token Selection**, an inference-time decoding postprocessing method. It combines semantic categories, input attention, and candidate probabilities to adjust next-token selection while preserving model weights and the original predicted probabilities.
 
 ## Hypothesis
 
@@ -88,7 +88,7 @@ Perform attribution experiments:
 - If the gates fail, inspect the next input with higher attention than the stopping point.
 - If no replacement candidate has been found by the stopping point, retain the original winner.
 
-Note: The tests all use **R=2, delta=0.10**, merely an uncalibrated starting point for the experiment. Attribution follows the idea of [feature ablation](https://captum.ai/docs/attribution_algorithms); it estimates contribution relative to a baseline, rather than proving a unique causal source.
+Note: The tests all use **R=2, delta=0.10**, merely the initial experimental thresholds. Attribution follows the idea of [feature ablation](https://captum.ai/docs/attribution_algorithms); it estimates contribution relative to a baseline, rather than proving a unique causal source.
 
 ## Expected replacement of the original next token: I put ketchup on my — result: face replaced with salad
 
@@ -285,7 +285,7 @@ Further verification and exploration:
 
 - More tests: to verify the hypothesis and adjust the thresholds.
 - Distinguish the dataset from the test set.
-- Introduce other optimization mechanisms to work together, such as Supervised Fine-Tuning and Preference Learning; I believe Semantic Category Calibration should take lower priority than both.
+- Introduce other optimization mechanisms to work together, such as Supervised Fine-Tuning and Preference Learning; I believe Semantic Category-Guided Next-Token Selection should take lower priority than both.
 
 ## Benefits and costs
 

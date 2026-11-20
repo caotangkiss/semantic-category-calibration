@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Semantic Category Calibration: calibrate next-token selection for user-supplied prompts."""
+"""Inference-time next-token selection for user-supplied prompts."""
 import argparse
 import json
 import math
@@ -325,7 +325,7 @@ def describe_token(record):
 def calibrate_next_token(text, tokenizer, model, policy=None, mode="auto", top_k=DEFAULT_TOP_K):
     import torch
     if model.training:
-        raise ValueError("Call model.eval() before calibration.")
+        raise ValueError("Call model.eval() before next-token selection.")
     if top_k <= 0:
         raise ValueError("top_k must be greater than zero.")
     policy = load_policy() if policy is None else validate_policy(policy)
@@ -346,7 +346,7 @@ def calibrate_next_token(text, tokenizer, model, policy=None, mode="auto", top_k
 STATUS_DESCRIPTIONS = REASONS
 
 
-ENGLISH_TEXT = {'description': 'Semantic Category Calibration: calibrate next-token selection for user-supplied prompts.',
+ENGLISH_TEXT = {'description': 'Semantic category-guided next-token selection for user-supplied prompts.',
  'prompt_help': 'One or more prompts; quote each prompt separately',
  'ratio_help': 'Minimum category mass divided by the original top-token probability',
  'gap_help': 'Maximum relative candidate deficit, e.g. 0.10 for 10%%',
