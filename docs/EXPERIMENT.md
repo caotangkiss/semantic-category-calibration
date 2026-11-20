@@ -15,7 +15,7 @@ Based on this hypothesis, I worked with Codex and Doubao on a simple experiment 
 ## Experimental setup
 
 - Use GPT-2 Small.
-- Run `.venv/bin/python semantic_category_calibration.py "I put ketchup on my"`
+- Run `.venv/bin/python semantic_category_selection.py "I put ketchup on my"`
 - Semantic categories and their members are explicitly configured in [selection-policy.json](../selection-policy.json), while associations between input tokens and candidates are calculated through model attribution. The food group has 12 members:
   `salad, burger, sandwich, fries, chips, pizza, eggs, steak, rice, soup, chicken, toast`
 - The actual forms used are single tokens with a leading space.
@@ -240,7 +240,7 @@ For the original winner `piece`, the zero-vector baseline selects `on` as its so
 Run the following command. The complete JSON result is saved to `outputs/prompt-1.json` by default:
 
 ```bash
-.venv/bin/python semantic_category_calibration.py "I put ketchup on a"
+.venv/bin/python semantic_category_selection.py "I put ketchup on a"
 ```
 
 ## Replace ketchup with cream: "I put cream on my" — result: face is not replaced

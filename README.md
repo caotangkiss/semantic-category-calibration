@@ -11,7 +11,7 @@ You need Python 3.9–3.11 and a local GPT-2 Small model directory containing co
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python semantic_category_calibration.py "I put ketchup on my" --model-dir /path/to/gpt2
+.venv/bin/python semantic_category_selection.py "I put ketchup on my" --model-dir /path/to/gpt2
 ```
 
 Replace `/path/to/gpt2` with your local model directory and the prompt with your own input.
@@ -22,4 +22,4 @@ The terminal shows the original and final selected tokens, the top 8 candidates 
 
 The full JSON report is saved to `outputs/prompt-1.json` by default. Another run overwrites the same file; use `--output-dir` to specify a different output directory.
 
-See [EXPERIMENT.md](docs/EXPERIMENT.md) for the method and experiments. For more arguments, run `.venv/bin/python semantic_category_calibration.py --help`.
+See [EXPERIMENT.md](docs/EXPERIMENT.md) for the method and experiments. For more arguments, run `.venv/bin/python semantic_category_selection.py --help`.

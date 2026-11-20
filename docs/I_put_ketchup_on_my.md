@@ -1,5 +1,5 @@
 ```bash
-% .venv/bin/python semantic_category_calibration.py "I put ketchup on my"
+% .venv/bin/python semantic_category_selection.py "I put ketchup on my"
 
 Prompt: "I put ketchup on my"
   Original: " face" 4.045409%

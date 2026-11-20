@@ -14,19 +14,19 @@ from unittest.mock import patch
 
 import torch
 
-from semantic_category_calibration import DEFAULT_MODEL_DIR, calibrate_next_token, encode_prompt, load_model
-import semantic_category_calibration as calibration
-from semantic_category_calibration import choose_token, load_policy, validate_policy
+from semantic_category_selection import DEFAULT_MODEL_DIR, select_next_token, encode_prompt, load_model
+import semantic_category_selection as selection
+from semantic_category_selection import choose_token, load_policy, validate_policy
 
 PROMPT = "I put ketchup on my"
 
 
-class CalibrationTest(unittest.TestCase):
+class SelectionTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tokenizer, cls.model = load_model(DEFAULT_MODEL_DIR)
         cls.policy = load_policy()
-        cls.report = calibrate_next_token(PROMPT, cls.tokenizer, cls.model)
+        cls.report = select_next_token(PROMPT, cls.tokenizer, cls.model)
         inputs, _ = encode_prompt(PROMPT, cls.tokenizer, cls.model)
         with torch.inference_mode():
             cls.probs = cls.model(**inputs, use_cache=False).logits[0, -1].double().softmax(-1)
@@ -47,8 +47,8 @@ class CalibrationTest(unittest.TestCase):
     def evidence(self, support, stop="my", attention=None):
         tokens = (attention or self.report["attention"])["tokens"]
         source = next((token for token in tokens if token["text"].strip() == stop), None)
-        return {"original_source": source, "baselines": list(calibration.ATTRIBUTION_BASELINES),
-                "tokens": [{"source": token, "original_drops": [1.0] * len(calibration.ATTRIBUTION_BASELINES),
+        return {"original_source": source, "baselines": list(selection.ATTRIBUTION_BASELINES),
+                "tokens": [{"source": token, "original_drops": [1.0] * len(selection.ATTRIBUTION_BASELINES),
                             "supported_token_ids": [self.tokenizer.encode(" " + word, add_special_tokens=False)[0]
                                                     for word in support.get(token["text"].strip(), [])]}
                            for token in tokens]}
@@ -88,13 +88,13 @@ class CalibrationTest(unittest.TestCase):
             self.assertTrue(torch.equal(kwargs["attention_mask"], inputs["attention_mask"]))
             return forward(*args, **kwargs)
         with patch.object(self.model, "forward", side_effect=checked_forward):
-            evidence = calibration.attribute_candidates(inputs, logits, self.report["attention"], self.tokenizer, self.model, self.policy)
+            evidence = selection.attribute_candidates(inputs, logits, self.report["attention"], self.tokenizer, self.model, self.policy)
         self.assertEqual(evidence, self.report["decision"]["attribution"])
         self.assertTrue(all(torch.equal(inputs[key], value) for key, value in original_inputs.items()))
         self.assertAlmostEqual(evidence["tokens"][5]["original_drops"][0], 3.41297689, places=4)
 
     def test_inconsistent_source_keeps_original_without_category_evaluation(self):
-        report = calibrate_next_token("I put ketchup on a", self.tokenizer, self.model)
+        report = select_next_token("I put ketchup on a", self.tokenizer, self.model)
         decision = report["decision"]
         self.assertEqual(decision["attribution"]["baseline_source_indices"], [4, 5, 5])
         self.assertIsNone(decision["attribution"]["original_source"])
@@ -108,7 +108,7 @@ class CalibrationTest(unittest.TestCase):
                        ([2, 1, 2], [1, 2, 1]), ([0, 0, 0], [-1, -1, -1])]:
             with self.subTest(scores=scores):
                 rows = [{"source": {"index": index}, "original_drops": values} for index, values in enumerate(scores)]
-                self.assertIsNone(calibration._original_source(rows)[0])
+                self.assertIsNone(selection._original_source(rows)[0])
 
     def test_stop_source_and_later_sources_are_never_evaluated(self):
         policy = copy.deepcopy(self.policy)
@@ -159,7 +159,7 @@ class CalibrationTest(unittest.TestCase):
         ids = self.tokenizer.encode(" " + word, add_special_tokens=False)
         self.assertGreater(len(ids), 1)
         group = self.source_group("example", [word, "salad"])
-        members, skipped = calibration.category_members(group, self.probs, self.tokenizer)
+        members, skipped = selection.category_members(group, self.probs, self.tokenizer)
         self.assertEqual(skipped, [word])
         self.assertEqual([member["text"] for member in members], [" salad"])
 
@@ -185,7 +185,7 @@ class CalibrationTest(unittest.TestCase):
         for head, foot, expected in [(0.039, 0.034, "body"), (0.038, 0.035, "food")]:
             probs = self.synthetic_probs({"face": 0.04, "salad": 0.038, "burger": 0.035, "fries": 0.01,
                                           "head": head, "foot": foot, "arm": 0.01})
-            with patch.object(calibration.random, "choice", side_effect=lambda groups: next(g for g in groups if g["id"] == "food")) as draw:
+            with patch.object(selection.random, "choice", side_effect=lambda groups: next(g for g in groups if g["id"] == "food")) as draw:
                 decision = self.decide(policy=policy, probs=probs, attribution=evidence)
             self.assertEqual(decision["selected_group"], expected)
             self.assertEqual(draw.call_count, int(expected == "food"))
@@ -201,9 +201,9 @@ class CalibrationTest(unittest.TestCase):
         self.assertEqual(decision["selected_source"]["text"], " on")
 
     def test_raw_and_unsupported_inputs_do_not_run_ablation(self):
-        with patch.object(calibration, "attribute_candidates", side_effect=AssertionError("unexpected ablation")):
-            raw = calibrate_next_token(PROMPT, self.tokenizer, self.model, mode="raw")
-            boundary = calibrate_next_token(PROMPT + " ", self.tokenizer, self.model)
+        with patch.object(selection, "attribute_candidates", side_effect=AssertionError("unexpected ablation")):
+            raw = select_next_token(PROMPT, self.tokenizer, self.model, mode="raw")
+            boundary = select_next_token(PROMPT + " ", self.tokenizer, self.model)
         self.assertEqual(raw["decision"]["status"], "raw")
         self.assertEqual(boundary["decision"]["status"], "unsupported_boundary")
         self.assertIsNone(raw["decision"]["attribution"])
@@ -225,31 +225,31 @@ class CalibrationTest(unittest.TestCase):
         self.assertIn("etchup", [token["text"] for token in tokens])
         self.assertIn(" k", [token["text"] for token in tokens])
 
-    def test_calibration_requires_user_prompts(self):
-        with patch.object(calibration, "load_model") as load, redirect_stderr(io.StringIO()):
+    def test_selection_requires_user_prompts(self):
+        with patch.object(selection, "load_model") as load, redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit) as error:
-                calibration.main([])
+                selection.main([])
         self.assertEqual(error.exception.code, 2)
         load.assert_not_called()
 
-    def test_calibration_named_report(self):
+    def test_selection_named_report(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "named.json"
-            with patch.object(calibration, "load_model", return_value=(self.tokenizer, self.model)), redirect_stdout(io.StringIO()):
-                calibration.main([PROMPT, "--json", str(path)])
+            with patch.object(selection, "load_model", return_value=(self.tokenizer, self.model)), redirect_stdout(io.StringIO()):
+                selection.main([PROMPT, "--json", str(path)])
             report = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(report["prompt"], PROMPT)
             self.assertEqual(report["decision"], self.report["decision"])
             self.assertEqual(list(Path(directory).iterdir()), [path])
 
-    def test_calibration_named_report_rejects_multiple_prompts(self):
-        with patch.object(calibration, "load_model") as load, redirect_stderr(io.StringIO()):
+    def test_selection_named_report_rejects_multiple_prompts(self):
+        with patch.object(selection, "load_model") as load, redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit) as error:
-                calibration.main([PROMPT, "another prompt", "--json", "report.json"])
+                selection.main([PROMPT, "another prompt", "--json", "report.json"])
         self.assertEqual(error.exception.code, 2)
         load.assert_not_called()
 
-    def test_calibration_runs_only_supplied_prompts_and_options(self):
+    def test_selection_runs_only_supplied_prompts_and_options(self):
         policy = copy.deepcopy(self.policy)
         policy["groups"] = [copy.deepcopy(self.food_group())]
         policy["groups"][0]["id"] = "custom-food"
@@ -261,8 +261,8 @@ class CalibrationTest(unittest.TestCase):
                     "--model-dir", "existing-checkpoint", "--min-group-ratio", "99",
                     "--top-k", "2"]
             output_text = io.StringIO()
-            with patch.object(calibration, "load_model", return_value=(self.tokenizer, self.model)) as load, redirect_stdout(output_text):
-                calibration.main(args)
+            with patch.object(selection, "load_model", return_value=(self.tokenizer, self.model)) as load, redirect_stdout(output_text):
+                selection.main(args)
             load.assert_called_once_with(Path("existing-checkpoint"))
             paths = sorted(output.glob("prompt-*.json"))
             reports = [json.loads(path.read_text(encoding="utf-8")) for path in paths]
@@ -276,11 +276,11 @@ class CalibrationTest(unittest.TestCase):
             self.assertEqual(output_text.getvalue().count("Top 2 next-token candidates"), 2)
             self.assertNotIn("Top 8 next-token candidates", output_text.getvalue())
 
-    def test_calibration_raw_mode_accepts_user_prompt(self):
+    def test_selection_raw_mode_accepts_user_prompt(self):
         with tempfile.TemporaryDirectory() as directory:
             output_text = io.StringIO()
-            with patch.object(calibration, "load_model", return_value=(self.tokenizer, self.model)), redirect_stdout(output_text):
-                calibration.main([PROMPT, "--mode", "raw", "--output-dir", directory])
+            with patch.object(selection, "load_model", return_value=(self.tokenizer, self.model)), redirect_stdout(output_text):
+                selection.main([PROMPT, "--mode", "raw", "--output-dir", directory])
             report = json.loads((Path(directory) / "prompt-1.json").read_text(encoding="utf-8"))
             self.assertEqual(report["decision"]["status"], "raw")
             self.assertEqual(report["decision"]["selected"], report["decision"]["original"])
@@ -288,10 +288,10 @@ class CalibrationTest(unittest.TestCase):
             self.assertIn("No selection steps.", output_text.getvalue())
             self.assertIn("No groups evaluated.", output_text.getvalue())
 
-    def test_calibration_prints_candidates_and_decision_details(self):
+    def test_selection_prints_candidates_and_decision_details(self):
         output_text = io.StringIO()
         with redirect_stdout(output_text):
-            calibration.print_report(self.report)
+            selection.print_report(self.report)
         rendered = output_text.getvalue()
         candidate_table = rendered.split("next-token candidates (original probabilities):\n", 1)[1].split("\n  Listed probability mass:", 1)[0]
         rows = candidate_table.splitlines()[1:]
@@ -315,14 +315,14 @@ class CalibrationTest(unittest.TestCase):
     def test_english_help(self):
         output = io.StringIO()
         with redirect_stdout(output), self.assertRaises(SystemExit) as error:
-            calibration.main(["--help"])
+            selection.main(["--help"])
         self.assertEqual(error.exception.code, 0)
         self.assertIn("One or more prompts", output.getvalue())
         self.assertNotIn("--intent", output.getvalue())
         self.assertIn("10%", output.getvalue())
 
     def test_top_k_display_does_not_limit_group_probability(self):
-        report = calibrate_next_token(PROMPT, self.tokenizer, self.model, top_k=1)
+        report = select_next_token(PROMPT, self.tokenizer, self.model, top_k=1)
         self.assertEqual(len(report["baseline"]["top"]), 1)
         self.assertEqual(report["decision"]["selected"], self.report["decision"]["selected"])
 
@@ -342,10 +342,10 @@ class PortabilityTest(unittest.TestCase):
             parent = Path(directory).resolve()
             checkout = parent / "repo"
             checkout.mkdir()
-            for name in ("semantic_category_calibration.py", "next-token-settings.json"):
+            for name in ("semantic_category_selection.py", "next-token-settings.json"):
                 shutil.copyfile(source / name, checkout / name)
             command = [sys.executable, "-B", "-c",
-                       "import json; import semantic_category_calibration as calibration; print(json.dumps([str(calibration.DEFAULT_MODEL_DIR),str(calibration.OUTPUT_DIR),calibration.DEFAULT_TOP_K]))"]
+                       "import json; import semantic_category_selection as selection; print(json.dumps([str(selection.DEFAULT_MODEL_DIR),str(selection.OUTPUT_DIR),selection.DEFAULT_TOP_K]))"]
             actual = json.loads(subprocess.check_output(command, cwd=checkout, text=True))
             self.assertEqual(actual, [str(checkout / "models/gpt2"), str(checkout / "outputs"), 8])
             (parent / "next-token-settings.json").write_text(json.dumps(
@@ -360,7 +360,7 @@ class PortabilityTest(unittest.TestCase):
             parent = Path(directory)
             checkout = parent / "standalone"
             checkout.mkdir()
-            for name in ("semantic_category_calibration.py", "next-token-settings.json", "selection-policy.json", "requirements.txt"):
+            for name in ("semantic_category_selection.py", "next-token-settings.json", "selection-policy.json", "requirements.txt"):
                 shutil.copyfile(source / name, checkout / name)
             # An unrelated parent config must not affect this checkout.
             (parent / "next-token-settings.json").write_text("{}", encoding="utf-8")
@@ -369,7 +369,7 @@ class PortabilityTest(unittest.TestCase):
             env.pop("PYTHONPATH", None)
             env.pop("PYTHONHOME", None)
             result = subprocess.run(
-                [sys.executable, "-B", str(checkout / "semantic_category_calibration.py"), PROMPT,
+                [sys.executable, "-B", str(checkout / "semantic_category_selection.py"), PROMPT,
                  "--model-dir", str(DEFAULT_MODEL_DIR), "--json", str(report_path)],
                 cwd=parent, env=env, capture_output=True, text=True,
             )

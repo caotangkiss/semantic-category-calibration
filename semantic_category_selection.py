@@ -194,7 +194,7 @@ def choose_token(text, probs, tokenizer, attention, policy, mode="auto", attribu
     if not supported_boundary(text):
         return finish("unsupported_boundary")
     if attribution is None:
-        raise ValueError("Automatic selection requires attribution; call calibrate_next_token or supply attribute_candidates output.")
+        raise ValueError("Automatic selection requires attribution; call select_next_token or supply attribute_candidates output.")
     stop_source = attribution["original_source"]
     thresholds = policy["thresholds"]
     k = min(policy["diagnostics"]["std_top_k"], probs.numel())
@@ -322,7 +322,7 @@ def describe_token(record):
     return f'{json.dumps(record["text"], ensure_ascii=False)} {record["probability"]:.6%}'
 
 
-def calibrate_next_token(text, tokenizer, model, policy=None, mode="auto", top_k=DEFAULT_TOP_K):
+def select_next_token(text, tokenizer, model, policy=None, mode="auto", top_k=DEFAULT_TOP_K):
     import torch
     if model.training:
         raise ValueError("Call model.eval() before next-token selection.")
@@ -492,7 +492,7 @@ def main(argv=None, *, text=ENGLISH_TEXT, statuses=STATUS_DESCRIPTIONS):
                     "transformers": version("transformers"), "device": "cpu",
                     "attention_implementation": "eager", "policy": policy}
         for index, prompt in enumerate(args.prompts, 1):
-            report = calibrate_next_token(prompt, tokenizer, model, policy=policy,
+            report = select_next_token(prompt, tokenizer, model, policy=policy,
                                        mode=args.mode, top_k=args.top_k)
             report["reproduction"] = metadata
             if args.json is not None:
